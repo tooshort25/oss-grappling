@@ -171,6 +171,10 @@
   .checkout:hover{filter:brightness(1.08)}
   .checkout:disabled{background:var(--ink3);color:var(--mut2);cursor:not-allowed}
   .checkout svg{width:19px;height:19px}
+  .pay-mp{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;font-family:var(--disp);font-weight:800;font-size:15px;letter-spacing:.08em;text-transform:uppercase;background:#fff;color:#000;border:1px solid #fff;padding:16px;border-radius:2px;cursor:pointer;transition:.18s;margin-bottom:10px}
+  .pay-mp:hover{background:#000;color:#fff}
+  .pay-mp:disabled{background:var(--ink3);color:var(--mut2);border-color:var(--line);cursor:not-allowed}
+  .or-sep{text-align:center;font-size:11px;color:var(--mut2);letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px}
 
   .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);background:#fff;color:#000;font-family:var(--disp);font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase;padding:13px 22px;border-radius:3px;opacity:0;visibility:hidden;transition:.28s;z-index:60}
   .toast.on{opacity:1;visibility:visible;transform:translateX(-50%) translateY(0)}
@@ -286,7 +290,11 @@
     <div class="drawer-body" id="cartBody"></div>
     <div class="drawer-foot">
       <div class="totrow"><span class="tl">Total</span><span class="tv" id="cartTotal">$0</span></div>
-      <p class="foot-note">El pago y el despacho los coordinamos por WhatsApp al enviar tu pedido.</p>
+      <p class="foot-note">Paga online con tarjeta, o coordina el pago y despacho por WhatsApp.</p>
+      <button class="pay-mp" id="payMp" onclick="payMercadoPago()" disabled>
+        Pagar con tarjeta
+      </button>
+      <div class="or-sep">o bien</div>
       <button class="checkout" id="checkout" onclick="checkout()" disabled>
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M.057 24l1.687-6.163a11.867 11.867 0 0 1-1.587-5.946C.16 5.335 5.495 0 12.05 0a11.817 11.817 0 0 1 8.413 3.488 11.824 11.824 0 0 1 3.48 8.414c-.003 6.557-5.338 11.892-11.893 11.892a11.9 11.9 0 0 1-5.688-1.448L.057 24zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884a9.86 9.86 0 0 0 1.512 5.26l-.999 3.648 3.985-1.041z"/></svg>
         Pedir por WhatsApp
@@ -313,8 +321,10 @@ const PRODUCTS = [
 ];
 
 const CLP = n => "$" + n.toLocaleString("es-CL");
-const cart = [];
+let cart = [];
+try { cart = JSON.parse(localStorage.getItem("ossCart")) || []; } catch { cart = []; }
 const picked = {};
+const saveCart = () => localStorage.setItem("ossCart", JSON.stringify(cart));
 
 function card(p){
   const sizes = p.sizes.map(s=>`<button class="size" data-id="${p.id}" data-size="${s}" onclick="pick('${p.id}','${s}',this)">${s}</button>`).join("");
@@ -349,10 +359,10 @@ function add(id){
   if(!size){ document.getElementById("hint-"+id).textContent="Elige una talla primero ↑"; return; }
   const line=cart.find(i=>i.id===id&&i.size===size);
   if(line) line.qty++; else cart.push({id,name:p.name,size,price:p.price,qty:1});
-  renderCart(); toast();
+  saveCart(); renderCart(); toast();
 }
-function changeQty(i,d){ cart[i].qty+=d; if(cart[i].qty<=0) cart.splice(i,1); renderCart(); }
-function removeItem(i){ cart.splice(i,1); renderCart(); }
+function changeQty(i,d){ cart[i].qty+=d; if(cart[i].qty<=0) cart.splice(i,1); saveCart(); renderCart(); }
+function removeItem(i){ cart.splice(i,1); saveCart(); renderCart(); }
 
 function renderCart(){
   const body=document.getElementById("cartBody");
@@ -362,6 +372,7 @@ function renderCart(){
   badge.textContent=count; badge.classList.toggle("on",count>0);
   document.getElementById("cartTotal").textContent=CLP(total);
   document.getElementById("checkout").disabled=count===0;
+  document.getElementById("payMp").disabled=count===0;
   if(!cart.length){ body.innerHTML=`<div class="empty"><span class="em-jp">空</span>Tu carrito está vacío.<br>Elige tus piezas y vuelve aquí.</div>`; return; }
   body.innerHTML=cart.map((i,idx)=>`
     <div class="ci"><div class="ci-info">
@@ -379,10 +390,64 @@ function checkout(){
   msg+=`\nTotal: ${CLP(total)}\n\n¿Me ayudan a coordinar pago y despacho? 🙏`;
   window.open(`https://wa.me/${WHATSAPP}?text=${encodeURIComponent(msg)}`,"_blank");
 }
+async function payMercadoPago(){
+  if(!cart.length) return;
+  const btn=document.getElementById("payMp");
+  btn.disabled=true; btn.textContent="Redirigiendo…";
+  try{
+    const res=await fetch("/.netlify/functions/create-preference",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({cart})
+    });
+    const data=await res.json();
+    if(!res.ok||!data.url) throw new Error(data.error||"No se pudo iniciar el pago");
+    localStorage.setItem("ossLastOrder", JSON.stringify(cart));
+    window.location.href=data.url;
+  }catch(err){
+    btn.disabled=false; btn.textContent="Pagar con tarjeta";
+    alert("No se pudo iniciar el pago. Intenta de nuevo o pide por WhatsApp.");
+  }
+}
+function whatsappFromOrder(items){
+  const total=items.reduce((a,i)=>a+i.qty*i.price,0);
+  let msg="Hola OSS Grappling 👋 Ya pagué online, este fue mi pedido:\n\n";
+  items.forEach(i=>{ msg+=`• ${i.name} — Talla ${i.size} x${i.qty} — ${CLP(i.price*i.qty)}\n`; });
+  msg+=`\nTotal: ${CLP(total)}\n\n¿Me confirman el despacho? 🙏`;
+  window.open(`https://wa.me/${WHATSAPP}?text=${encodeURIComponent(msg)}`,"_blank");
+}
+function handlePaymentReturn(){
+  const params=new URLSearchParams(window.location.search);
+  const status=params.get("pago");
+  if(!status) return;
+  let lastOrder=[];
+  try{ lastOrder=JSON.parse(localStorage.getItem("ossLastOrder"))||[]; }catch{ lastOrder=[]; }
+  if(status==="exito"){
+    cart=[]; saveCart(); renderCart();
+    localStorage.removeItem("ossLastOrder");
+    toast("¡Pago recibido!");
+    if(lastOrder.length){
+      setTimeout(()=>{
+        if(confirm("¡Pago recibido! ¿Confirmamos tu pedido por WhatsApp para coordinar el despacho?")) whatsappFromOrder(lastOrder);
+      },600);
+    }
+  }else if(status==="fallo"){
+    alert("El pago no se pudo completar. Tu carrito sigue guardado, puedes reintentar.");
+  }else if(status==="pendiente"){
+    alert("Tu pago quedó pendiente de confirmación. Te avisaremos apenas se acredite.");
+  }
+  window.history.replaceState({},"",window.location.pathname);
+}
 function openCart(){ document.getElementById("drawer").classList.add("on"); document.getElementById("overlay").classList.add("on"); }
 function closeCart(){ document.getElementById("drawer").classList.remove("on"); document.getElementById("overlay").classList.remove("on"); }
 let toastT;
-function toast(){ const t=document.getElementById("toast"); t.classList.add("on"); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove("on"),1600); }
+function toast(msg){
+  const t=document.getElementById("toast");
+  t.textContent=msg||"Agregado al carrito";
+  t.classList.add("on");
+  clearTimeout(toastT);
+  toastT=setTimeout(()=>t.classList.remove("on"),1600);
+}
 
 const unit=`<span>OSS <span class="sep">/</span> GRAPPLING <span class="jp">神忍</span> <span class="sep">/</span> JIU-JITSU WEAR <span class="sep">/</span></span>`;
 document.getElementById("mq").innerHTML=unit.repeat(10);
@@ -393,6 +458,7 @@ document.getElementById("footIg").href  = INSTAGRAM;
 document.getElementById("footMail").href= `mailto:${EMAIL}`;
 document.getElementById("yr").textContent=new Date().getFullYear();
 renderCart();
+handlePaymentReturn();
 document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeCart(); });
 </script>
 </body>
